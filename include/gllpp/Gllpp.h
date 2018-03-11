@@ -176,7 +176,7 @@ public:
 
 	void startGraph(std::string name, std::string_view str, ResultType type)
 	{
-		const auto offset = str.data() - _str.data();
+		const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
 
 		const auto nodeName = std::to_string(offset) + ": " + name;
 		_graph << "    \"initial\" -> \"" << nodeName << "\"\n"
@@ -186,8 +186,8 @@ public:
 
 	void continueGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ResultType type)
 	{
-		const auto offset = str.data() - _str.data();
-		const auto prevOffset = prevStr.data() - _str.data();
+		const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
+		const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
 
 		const auto nodeName = std::to_string(offset) + ": " + name;
 		const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
@@ -256,9 +256,11 @@ public:
 
 		((T*)this)->parse_impl(lexer, trampoline, str, [&failures, &successes](Trampoline& trampoline, ResultType r, std::string_view trail)
 		{
-			GraphvizNode ls(trampoline, "parse_" + std::to_string((int)r), trail);
+			const auto isSuccess = r == ResultType::Success && trail.empty();
 
-			if (r == ResultType::Success && trail.empty())
+			GraphvizNode ls(trampoline, isSuccess ? "SUCCESS" : "FAILURE", trail);
+
+			if (isSuccess)
 			{
 				ls.emit(ResultType::Success);
 				successes.push_back({ ResultType::Success, std::string(trail) });
