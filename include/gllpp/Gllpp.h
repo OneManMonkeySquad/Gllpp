@@ -387,9 +387,9 @@ public:
 	template<typename F>
 	void parse_impl(Lexer& lexer, Trampoline& trampoline, std::string_view str, F f) const
 	{
-		GraphvizNode ls(trampoline, "<Capture>", str);
-
 		auto result = lexer.lex(str);
+
+		GraphvizNode ls(trampoline, "<Capture '" + std::string(result.token) + "'>", str);
 
 		ls.emit(ResultType::Success);
 		f(trampoline, ResultType::Success, result.trail);
@@ -519,4 +519,10 @@ private:
 Terminal operator ""_t(const char* str, size_t size)
 {
 	return std::string(str, size);
+}
+
+template<typename P>
+Disjunction<P, Empty> Optional(P p)
+{
+	return { p, Empty() };
 }
