@@ -213,20 +213,26 @@ public:
 		return _name;
 	}
 
+	void set_layout(std::string layout)
+	{
+		_layout = layout;
+	}
+
 protected:
 	std::string _name;
+	std::string _layout;
 };
 
 template<typename T>
 class ComposableParser : public ParserBase
 {
 public:
-	std::vector<ParserResult> parse(std::string str) const
+	std::vector<ParserResult> parse_entry(std::string str) const
 	{
 		Trampoline trampoline(str);
 		std::vector<ParserResult> successes, failures;
 
-		((T*)this)->parse_impl(trampoline, str, [&failures, &successes](Trampoline& trampoline, ResultType r, std::string_view trail)
+		((T*)this)->parse_impl(trampoline, {}, str, [&failures, &successes](Trampoline& trampoline, ResultType r, std::string_view trail)
 		{
 			const auto isSuccess = r == ResultType::Success && trail.empty();
 
@@ -248,6 +254,21 @@ public:
 
 		return !successes.empty() ? successes : failures;
 	}
+
+
+	template<typename F>
+	void parse_impl(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
+	{
+		size_t i = 0;
+		for (; i < str.size(); ++i)
+		{
+			if (layout.find_first_of(str[i]) == std::string::npos)
+				break;
+		}
+
+		((T*)this)->parse(trampoline, layout, str.substr(i), f);
+	}
+
 
 	template<typename F>
 	void gather(F f) const
@@ -290,7 +311,7 @@ public:
 	}
 
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		if (_wrapper->wrapper == nullptr)
 		{
@@ -298,7 +319,7 @@ public:
 			return;
 		}
 
-		_wrapper->wrapper->parse(trampoline, str, f);
+		_wrapper->wrapper->parse(trampoline, layout, str, f);
 	}
 
 private:
@@ -307,7 +328,7 @@ private:
 	public:
 		virtual ~IWrapper() = default;
 
-		virtual void parse(Trampoline& trampoline, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const = 0;
+		virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const = 0;
 	};
 
 	template<typename P>
@@ -318,9 +339,9 @@ private:
 			: _parser(p)
 		{}
 
-		virtual void parse(Trampoline& trampoline, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const override
+		virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const override
 		{
-			_parser.parse_impl(trampoline, str, f);
+			_parser.parse_impl(trampoline, layout, str, f);
 		}
 
 	private:
@@ -336,13 +357,40 @@ private:
 };
 
 
+template<typename P>
+class Layout : public ComposableParser<Layout<P>>
+{
+public:
+	Layout(P p, std::string definition)
+		: _p(p)
+		, _definition(definition)
+	{}
+
+	template<typename F>
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
+	{
+		_p.parse_impl(trampoline, _definition, str, f);
+	}
+
+private:
+	P _p;
+	std::string _definition;
+};
+
+
+template<typename P>
+Layout<P> SetLayout(P p, std::string definition)
+{
+	return { p, definition };
+}
+
 
 
 class Empty : public ComposableParser<Empty>
 {
 public:
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		GraphvizNode ls(trampoline, "<Empty>", str);
 
@@ -386,7 +434,7 @@ class Capture : public ComposableParser<Capture<DELIMITERS...>>
 {
 public:
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		size_t i = 0;
 		for (; i < str.size(); ++i)
@@ -430,7 +478,7 @@ public:
 	{}
 
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		GraphvizNode ls(trampoline, _what, str);
 
@@ -463,11 +511,11 @@ public:
 	{}
 
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		GraphvizNode ls(trampoline, _name, str);
 
-		_lhs.parse_impl(trampoline, str, [f, ls, this](Trampoline& trampoline, ResultType result, std::string_view trail)
+		_lhs.parse_impl(trampoline, layout, str, [layout, f, ls, this](Trampoline& trampoline, ResultType result, std::string_view trail)
 		{
 			if (result == ResultType::Failure)
 			{
@@ -477,7 +525,7 @@ public:
 				return;
 			}
 
-			_rhs.parse_impl(trampoline, trail, [=](Trampoline& trampoline, ResultType result, std::string_view trail)
+			_rhs.parse_impl(trampoline, layout, trail, [=](Trampoline& trampoline, ResultType result, std::string_view trail)
 			{
 				ls.emit(result);
 
@@ -504,15 +552,15 @@ public:
 	{}
 
 	template<typename F>
-	void parse_impl(Trampoline& trampoline, std::string_view str, F f) const
+	void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const
 	{
 		GraphvizNode ls(trampoline, _name, str);
 
-		gather([&trampoline, str, f, ls](auto& parser)
+		gather([&](auto& parser)
 		{
-			trampoline.add([str, f, ls, &parser](Trampoline& trampoline)
+			trampoline.add([str, layout, f, ls, &parser](Trampoline& trampoline)
 			{
-				parser.parse_impl(trampoline, str, [f, ls](Trampoline& trampoline, ResultType result, std::string_view trail)
+				parser.parse_impl(trampoline, layout, str, [f, ls](Trampoline& trampoline, ResultType result, std::string_view trail)
 				{
 					ls.emit(result);
 					f(trampoline, result, trail);
