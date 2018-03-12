@@ -1,21 +1,23 @@
     #include <gllpp/Gllpp.h>
     #include <iostream>
     
-    Lexer l;
-	Parser grammar;
+    Parser grammar;
 
-    auto function = "def"_t + Capture() + "{"_t + "}"_t;
-    function.set_name("[function]");
+	auto function = "def"_t + Capture<'{'>() + "{"_t + "}"_t;
+	function.set_name("[function]");
 
-    auto cls = "class"_t + Capture() + "{"_t + "}"_t;
-    cls.set_name("[class]");
+	auto cls = "struct"_t + Capture<'{'>() + "{"_t + "}"_t;
+	cls.set_name("[class]");
 
-    auto topLevelDefinition = function | cls;
-    grammar = topLevelDefinition + (grammar | Empty());
+	auto topLevelDefinition = function | cls;
 
-    auto parseResults = grammar.parse(lexer, "def test { } class cls { }");
-    for (auto& parseResult : parseResults) {
-        std::cout << parseResult.type << " '" << parseResult.trail << "'" << std::endl;
-    }
+	grammar = SetLayout(topLevelDefinition + Optional(grammar), " \t\r\n");
+
+	auto code = "def test {}\n"
+		"struct cls {}";
+	auto parseResults = grammar.parse_entry(code);
+	for (auto& parseResult : parseResults) {
+		std::cout << parseResult.type << " '" << parseResult.trail << "'" << std::endl;
+	}
 
 ![Example Output](ExampleOutput.png)
