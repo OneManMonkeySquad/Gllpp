@@ -20,8 +20,8 @@ class Disjunction;
 
 enum class ResultType
 {
-	Success,
-	Failure
+	Failure,
+	Success
 };
 
 std::ostream& operator<< (std::ostream& s, ResultType result)
@@ -67,7 +67,8 @@ public:
 		_topStack = _prevStack;
 	}
 
-	void emit(ResultType type) const;
+	void emit() const;
+	void emit_end(ResultType type) const;
 
 	const std::string& get_name() const
 	{
@@ -146,22 +147,32 @@ public:
 		}
 	}
 
-	void startGraph(std::string name, std::string_view str, ResultType type)
+	void startGraph(std::string name, std::string_view str)
 	{
 		const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
 
 		const auto nodeName = std::to_string(offset) + ": " + name;
 		_graph << "    \"initial\" -> \"" << nodeName << "\"\n"
-			<< "    \"" << nodeName << "\" [color=" << (type == ResultType::Success ? "green" : "red") << ", penwidth=5]\n"
 			<< "\n";
 	}
 
-	void continueGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ResultType type)
+	void continueGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str)
 	{
 		const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
 		const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
 
 		const auto nodeName = std::to_string(offset) + ": " + name;
+		const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
+		_graph << "    \"" << prevNodeName << "\" -> \"" << nodeName << "\"\n"
+			<< "\n";
+	}
+
+	void endGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ResultType type)
+	{
+		const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
+		const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
+
+		const auto nodeName = std::to_string(offset) + ": " + name + " (" + (type == ResultType::Success ? "Success" : "Failure") + ")";
 		const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
 		_graph << "    \"" << prevNodeName << "\" -> \"" << nodeName << "\"\n"
 			<< "    \"" << nodeName << "\" [color=" << (type == ResultType::Success ? "green" : "red") << ", penwidth=5]\n"
@@ -183,19 +194,27 @@ private:
 };
 
 
-void GraphvizNode::emit(ResultType type) const
+void GraphvizNode::emit() const
 {
 	if (_name.empty())
 		return;
 
 	if (_prevStack == nullptr)
 	{
-		_trampoline.startGraph(_name, _str, type);
+		_trampoline.startGraph(_name, _str);
 	}
 	else
 	{
-		_trampoline.continueGraph(_prevStack->_name, _prevStack->_str, _name, _str, type);
+		_trampoline.continueGraph(_prevStack->_name, _prevStack->_str, _name, _str);
 	}
+}
+
+void GraphvizNode::emit_end(ResultType type) const
+{
+	if (_name.empty())
+		return;
+
+	_trampoline.endGraph(_prevStack->_name, _prevStack->_str, _name, _str, type);
 }
 
 
@@ -236,16 +255,16 @@ public:
 		{
 			const auto isSuccess = r == ResultType::Success && trail.empty();
 
-			GraphvizNode ls(trampoline, isSuccess ? "SUCCESS" : "FAILURE", trail);
+			GraphvizNode ls(trampoline, "parse_entry", trail);
 
 			if (isSuccess)
 			{
-				ls.emit(ResultType::Success);
+				ls.emit_end(ResultType::Success);
 				successes.push_back({ ResultType::Success, std::string(trail) });
 			}
 			else
 			{
-				ls.emit(ResultType::Failure);
+				ls.emit_end(ResultType::Failure);
 				failures.push_back({ ResultType::Failure, std::string(trail) });
 			}
 		});
@@ -394,7 +413,7 @@ public:
 	{
 		GraphvizNode ls(trampoline, "<Empty>", str);
 
-		ls.emit(ResultType::Success);
+		ls.emit();
 		f(trampoline, ResultType::Success, str);
 	}
 };
@@ -456,11 +475,11 @@ public:
 
 		if (value.empty())
 		{
-			ls.emit(ResultType::Failure);
+			ls.emit();
 			f(trampoline, ResultType::Failure, {});
 		}
 
-		ls.emit(ResultType::Success);
+		ls.emit();
 		f(trampoline, ResultType::Success, str.substr(i));
 		return;
 	}
@@ -484,12 +503,12 @@ public:
 
 		if (str.size() < _what.size() || memcmp(str.data(), _what.data(), _what.size()))
 		{
-			ls.emit(ResultType::Failure);
+			ls.emit();
 			f(trampoline, ResultType::Failure, str);
 			return;
 		}
 
-		ls.emit(ResultType::Success);
+		ls.emit();
 		f(trampoline, ResultType::Success, str.substr(_what.size()));
 	}
 
@@ -519,7 +538,7 @@ public:
 		{
 			if (result == ResultType::Failure)
 			{
-				ls.emit(ResultType::Failure);
+				ls.emit();
 
 				f(trampoline, ResultType::Failure, trail);
 				return;
@@ -527,7 +546,7 @@ public:
 
 			_rhs.parse_impl(trampoline, layout, trail, [=](Trampoline& trampoline, ResultType result, std::string_view trail)
 			{
-				ls.emit(result);
+				ls.emit();
 
 				f(trampoline, result, trail);
 			});
@@ -562,7 +581,7 @@ public:
 			{
 				parser.parse_impl(trampoline, layout, str, [f, ls](Trampoline& trampoline, ResultType result, std::string_view trail)
 				{
-					ls.emit(result);
+					ls.emit();
 					f(trampoline, result, trail);
 				});
 			});
