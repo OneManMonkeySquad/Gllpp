@@ -6,7 +6,7 @@
 #include <functional>
 #include <fstream>
 #include <iostream>
-#include <variant>
+#include <optional>
 
 namespace Gllpp {
 	class Trampoline;
@@ -19,31 +19,18 @@ namespace Gllpp {
 
 
 
+	struct ParserResult {
+		std::string_view trail;
+		std::optional<std::string> error;
 
-	enum class ResultType {
-		Failure,
-		Success
-	};
-
-	std::ostream& operator<< (std::ostream& s, ResultType result) {
-		switch (result) {
-		case ResultType::Success: s << "Success"; break;
-		case ResultType::Failure: s << "Failure"; break;
+		bool is_success() const {
+			return !error;
 		}
-		return s;
-	}
 
-
-	struct ParserSuccess {
-		std::string_view trail;
+		bool operator<(const ParserResult& other) const {
+			return trail.size() < other.trail.size();
+		}
 	};
-
-	struct ParserFailure {
-		std::string_view trail;
-		std::string description;
-	};
-
-	using ParserResult = std::variant<ParserSuccess, ParserFailure>;
 
 
 
@@ -68,7 +55,7 @@ namespace Gllpp {
 		}
 
 		void emit() const;
-		void emit_end(ResultType type) const;
+		void emit_end(ParserResult result) const;
 
 		const std::string& get_name() const {
 			return _name;
@@ -155,14 +142,14 @@ namespace Gllpp {
 				<< "\n";
 		}
 
-		void endGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ResultType type) {
+		void endGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ParserResult result) {
 			const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
 			const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
 
-			const auto nodeName = std::to_string(offset) + ": " + name + " (" + (type == ResultType::Success ? "Success" : "Failure") + ")";
+			const auto nodeName = std::to_string(offset) + ": " + name + " (" + (result.is_success() ? "Success" : "Failure") + ")";
 			const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
 			_graph << "    \"" << prevNodeName << "\" -> \"" << nodeName << "\"\n"
-				<< "    \"" << nodeName << "\" [color=" << (type == ResultType::Success ? "green" : "red") << ", penwidth=5]\n"
+				<< "    \"" << nodeName << "\" [color=" << (result.is_success() ? "green" : "red") << ", penwidth=5]\n"
 				<< "\n";
 		}
 
@@ -192,11 +179,11 @@ namespace Gllpp {
 		}
 	}
 
-	void GraphvizNode::emit_end(ResultType type) const {
+	void GraphvizNode::emit_end(ParserResult result) const {
 		if (_name.empty())
 			return;
 
-		_trampoline.endGraph(_prevStack->_name, _prevStack->_str, _name, _str, type);
+		_trampoline.endGraph(_prevStack->_name, _prevStack->_str, _name, _str, result);
 	}
 
 
@@ -228,18 +215,26 @@ namespace Gllpp {
 			Trampoline trampoline{ str };
 			std::vector<ParserResult> successes, failures;
 
-			_parse_impl(trampoline, {}, str, [&](Trampoline& trampoline, ResultType r, std::string_view trail) {
-				const auto isSuccess = r == ResultType::Success && trail.empty();
+			_parse_impl(trampoline, {}, str, [&](Trampoline& trampoline, ParserResult result) {
+				GraphvizNode ls{ trampoline, "END", result.trail };
 
-				GraphvizNode ls{ trampoline, "END", trail };
-
-				if (r == ResultType::Success && trail.empty()) {
-					ls.emit_end(ResultType::Success);
-					successes.push_back(ParserSuccess{});
+				if (!result.trail.empty()) {
+					ParserResult actualResult{ result.trail, "Tail left" };
+					ls.emit_end(actualResult);
+					if (successes.empty()) {
+						failures.push_back(actualResult);
+					}
+				}
+				else if (result.is_success()) {
+					ls.emit_end(result);
+					successes.push_back(result);
+					failures.clear();
 				}
 				else {
-					ls.emit_end(ResultType::Failure);
-					failures.push_back(ParserFailure{ trail, "TODO" });
+					ls.emit_end(result);
+					if (successes.empty()) {
+						failures.push_back(result);
+					}
 				}
 			});
 
@@ -297,7 +292,7 @@ namespace Gllpp {
 		template<typename F>
 		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
 			if (_wrapper->wrapper == nullptr) {
-				f(trampoline, ResultType::Failure, str);
+				f(trampoline, ParserResult{ str, "Parser is null" });
 				return;
 			}
 
@@ -309,7 +304,7 @@ namespace Gllpp {
 		public:
 			virtual ~IWrapper() = default;
 
-			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const = 0;
+			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const = 0;
 		};
 
 		template<typename P>
@@ -319,7 +314,7 @@ namespace Gllpp {
 				: _parser(p) {
 			}
 
-			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ResultType, std::string_view)> f) const override {
+			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const override {
 				_parser._parse_impl(trampoline, layout, str, f);
 			}
 
@@ -369,7 +364,7 @@ namespace Gllpp {
 			GraphvizNode ls{ trampoline, "Empty", str };
 			ls.emit();
 
-			f(trampoline, ResultType::Success, str);
+			f(trampoline, ParserResult{ str });
 		}
 	};
 
@@ -414,10 +409,10 @@ namespace Gllpp {
 			ls.emit();
 
 			if (value.empty()) {
-				f(trampoline, ResultType::Failure, {});
+				f(trampoline, ParserResult{ str, "Capture empty value" });
 			}
 
-			f(trampoline, ResultType::Success, str.substr(i));
+			f(trampoline, ParserResult{ str.substr(i) });
 			return;
 		}
 	};
@@ -438,11 +433,11 @@ namespace Gllpp {
 			ls.emit();
 
 			if (str.size() < _what.size() || memcmp(str.data(), _what.data(), _what.size())) {
-				f(trampoline, ResultType::Failure, str);
+				f(trampoline, ParserResult{ str, "Terminal missing " + _what });
 				return;
 			}
 
-			f(trampoline, ResultType::Success, str.substr(_what.size()));
+			f(trampoline, ParserResult{ str.substr(_what.size()) });
 		}
 
 	private:
@@ -467,19 +462,17 @@ namespace Gllpp {
 		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
 			GraphvizNode ls(trampoline, _name, str);
 
-			_lhs._parse_impl(trampoline, layout, str, [layout, f, ls, this](Trampoline& trampoline, ResultType result, std::string_view trail) {
-				if (result == ResultType::Failure) {
+			_lhs._parse_impl(trampoline, layout, str, [layout, f, ls, this](Trampoline& trampoline, ParserResult result) {
+				if (!result.is_success()) {
 					ls.emit();
-
-					f(trampoline, ResultType::Failure, trail);
-					return;
+					f(trampoline, result);
 				}
-
-				_rhs._parse_impl(trampoline, layout, trail, [=](Trampoline& trampoline, ResultType result, std::string_view trail) {
-					ls.emit();
-
-					f(trampoline, result, trail);
-				});
+				else {
+					_rhs._parse_impl(trampoline, layout, result.trail, [=](Trampoline& trampoline, ParserResult result) {
+						ls.emit();
+						f(trampoline, result);
+					});
+				}
 			});
 		}
 
@@ -507,9 +500,9 @@ namespace Gllpp {
 
 			_gather([&](auto& parser) {
 				trampoline.add([str, layout, f, ls, &parser](Trampoline& trampoline) {
-					parser._parse_impl(trampoline, layout, str, [f, ls](Trampoline& trampoline, ResultType result, std::string_view trail) {
+					parser._parse_impl(trampoline, layout, str, [f, ls](Trampoline& trampoline, ParserResult result) {
 						ls.emit();
-						f(trampoline, result, trail);
+						f(trampoline, result);
 					});
 				});
 			});
