@@ -1,25 +1,17 @@
 This repo is for prototyping, production ready code coming later.
 
-    #include <gllpp/Gllpp.h>
-    #include <iostream>
-    
     Parser grammar;
 
-	auto function = "def"_t + Capture<'{'>() + "{"_t + "}"_t;
-	function.set_name("[function]");
+    auto function = "def"_t + Capture<'{'>() + "{"_t + "}"_t;
+    auto cls = "struct"_t + Capture<'{'>() + "{"_t + "}"_t;
+    auto topLevelDefinition = (function | cls) + optional(grammar);
+    grammar = layout(topLevelDefinition, " \t\r\n");
 
-	auto cls = "struct"_t + Capture<'{'>() + "{"_t + "}"_t;
-	cls.set_name("[class]");
+    auto code = "def test {}\n"
+        "struct cls {}";
 
-	auto topLevelDefinition = function | cls;
-
-	grammar = SetLayout(topLevelDefinition + Optional(grammar), " \t\r\n");
-
-	auto code = "def test {}\n"
-		"struct cls {}";
-	auto parseResults = grammar.parse_entry(code);
-	for (auto& parseResult : parseResults) {
-		std::cout << parseResult.type << " '" << parseResult.trail << "'" << std::endl;
-	}
+    auto parseResults = grammar.parse(code);
+    REQUIRE(parseResults.size() == 1);
+    REQUIRE(parseResults[0].is_success());
 
 ![Example Output](ExampleOutput.png)
