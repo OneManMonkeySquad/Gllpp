@@ -1,3 +1,5 @@
+This repo is for prototyping, production ready code coming later.
+
     #include <gllpp/Gllpp.h>
     #include <iostream>
     
