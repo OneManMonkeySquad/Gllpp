@@ -34,79 +34,18 @@ namespace Gllpp {
 
 
 
-	class GraphvizNode {
-	public:
-		GraphvizNode(Trampoline& trampoline, std::string name, std::string_view str)
-			: _trampoline(trampoline)
-			, _name(name)
-			, _str(str) {
-			if (_name.empty())
-				return;
-
-			_prevStack = _topStack;
-			_topStack = this;
-		}
-
-		~GraphvizNode() {
-			if (_name.empty())
-				return;
-
-			_topStack = _prevStack;
-		}
-
-		void emit() const;
-		void emit_end(ParserResult result) const;
-
-		const std::string& get_name() const {
-			return _name;
-		}
-
-		const std::string_view& get_str() const {
-			return _str;
-		}
-
-		static GraphvizNode* get_top() {
-			return _topStack;
-		}
-
-	private:
-		static GraphvizNode* _topStack;
-		GraphvizNode* _prevStack;
-
-		Trampoline& _trampoline;
-		std::string _name;
-		std::string_view _str;
-	};
-	GraphvizNode* GraphvizNode::_topStack = nullptr;
-
-
-
-
 
 
 
 	class Trampoline {
 	public:
 		Trampoline(std::string_view str)
-			: _str(str)
-			, _graph("graph.dot") {
-			_graph << "digraph {\n"
-				<< "    rankdir=LR;\n";
-		}
-
-		~Trampoline() {
-			_graph << "}";
+			: _str(str) {
 		}
 
 		void add(std::function<void(Trampoline&)> f) {
 			Work work;
 			work.f = f;
-
-			auto topNode = GraphvizNode::get_top();
-			if (topNode != nullptr) {
-				work.graphName = GraphvizNode::get_top()->get_name();
-				work.graphStr = GraphvizNode::get_top()->get_str();
-			}
 
 			_work.push_back(work);
 		}
@@ -116,95 +55,23 @@ namespace Gllpp {
 				auto work = _work.back();
 				_work.pop_back();
 
-				GraphvizNode ls{ *this, work.graphName, work.graphStr };
-
 				work.f(*this);
-
-				_graph << "\n\n\n";
 			}
-		}
-
-		void startGraph(std::string name, std::string_view str) {
-			const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
-
-			const auto nodeName = std::to_string(offset) + ": " + name;
-			_graph << "    \"ENTRY\" -> \"" << nodeName << "\"\n"
-				<< "\n";
-		}
-
-		void continueGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str) {
-			const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
-			const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
-
-			const auto nodeName = std::to_string(offset) + ": " + name;
-			const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
-			_graph << "    \"" << prevNodeName << "\" -> \"" << nodeName << "\"\n"
-				<< "\n";
-		}
-
-		void endGraph(std::string prevName, std::string_view prevStr, std::string name, std::string_view str, ParserResult result) {
-			const auto offset = !str.empty() ? str.data() - _str.data() : _str.size();
-			const auto prevOffset = !prevStr.empty() ? prevStr.data() - _str.data() : _str.size();
-
-			const auto nodeName = std::to_string(offset) + ": " + name + " (" + (result.is_success() ? "Success" : "Failure") + ")";
-			const auto prevNodeName = std::to_string(prevOffset) + ": " + prevName;
-			_graph << "    \"" << prevNodeName << "\" -> \"" << nodeName << "\"\n"
-				<< "    \"" << nodeName << "\" [color=" << (result.is_success() ? "green" : "red") << ", penwidth=5]\n"
-				<< "\n";
 		}
 
 	private:
 		struct Work {
 			std::function<void(Trampoline&)> f;
-			std::string graphName;
-			std::string_view graphStr;
 		};
 
 		std::vector<Work> _work;
 		std::string_view _str;
-
-		std::ofstream _graph;
 	};
 
-
-	void GraphvizNode::emit() const {
-		if (_name.empty())
-			return;
-
-		if (_prevStack == nullptr) {
-			_trampoline.startGraph(_name, _str);
-		}
-		else {
-			_trampoline.continueGraph(_prevStack->_name, _prevStack->_str, _name, _str);
-		}
-	}
-
-	void GraphvizNode::emit_end(ParserResult result) const {
-		if (_name.empty())
-			return;
-
-		_trampoline.endGraph(_prevStack->_name, _prevStack->_str, _name, _str, result);
-	}
 
 
 
 	class ParserBase {
-	public:
-		void set_name(std::string name) {
-			_name = name;
-		}
-
-		const std::string& get_name() const {
-			return _name;
-		}
-
-		void set_layout(std::string layout) {
-			_layout = layout;
-		}
-
-	protected:
-		std::string _name;
-		std::string _layout;
 	};
 
 	template<typename T>
@@ -215,43 +82,25 @@ namespace Gllpp {
 			Trampoline trampoline{ str };
 			std::vector<ParserResult> successes, failures;
 
-			_parse_impl(trampoline, {}, str, [&](Trampoline& trampoline, ParserResult result) {
-				GraphvizNode ls{ trampoline, "END", result.trail };
-
+			static_cast<const T*>(this)->_chain(trampoline, {}, str, [&](Trampoline& trampoline, ParserResult result) {
 				if (!result.trail.empty()) {
 					ParserResult actualResult{ result.trail, "Tail left" };
-					ls.emit_end(actualResult);
 					if (successes.empty()) {
 						failures.push_back(actualResult);
 					}
 				}
 				else if (result.is_success()) {
-					ls.emit_end(result);
 					successes.push_back(result);
 					failures.clear();
 				}
-				else {
-					ls.emit_end(result);
-					if (successes.empty()) {
-						failures.push_back(result);
-					}
+				else if (successes.empty()) {
+					failures.push_back(result);
 				}
 			});
 
 			trampoline.run();
 
 			return !successes.empty() ? successes : failures;
-		}
-
-		template<typename F>
-		void _parse_impl(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			size_t i = 0;
-			for (; i < str.size(); ++i) {
-				if (layout.find_first_of(str[i]) == std::string::npos)
-					break;
-			}
-
-			static_cast<const T*>(this)->__parse_impl_inner(trampoline, layout, str.substr(i), f);
 		}
 
 		template<typename F>
@@ -267,6 +116,17 @@ namespace Gllpp {
 		template<typename OtherT>
 		Disjunction<T, OtherT> operator|(OtherT other) const {
 			return { *static_cast<const T*>(this), other };
+		}
+
+	protected:
+		static void skip_layout(std::string_view layout, std::string_view& str) {
+			size_t i = 0;
+			for (; i < str.size(); ++i) {
+				if (layout.find_first_of(str[i]) == std::string::npos)
+					break;
+			}
+
+			str = str.substr(i);
 		}
 	};
 
@@ -290,13 +150,13 @@ namespace Gllpp {
 		}
 
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
+		void _chain(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
 			if (_wrapper->wrapper == nullptr) {
 				f(trampoline, ParserResult{ str, "Parser is null" });
 				return;
 			}
 
-			_wrapper->wrapper->parse(trampoline, layout, str, f);
+			_wrapper->wrapper->chain(trampoline, layout, str, f);
 		}
 
 	private:
@@ -304,7 +164,7 @@ namespace Gllpp {
 		public:
 			virtual ~IWrapper() = default;
 
-			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const = 0;
+			virtual void chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const = 0;
 		};
 
 		template<typename P>
@@ -314,8 +174,8 @@ namespace Gllpp {
 				: _parser(p) {
 			}
 
-			virtual void parse(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const override {
-				_parser._parse_impl(trampoline, layout, str, f);
+			virtual void chain(Trampoline& trampoline, std::string_view layout, std::string_view str, std::function<void(Trampoline&, ParserResult)> f) const override {
+				_parser._chain(trampoline, layout, str, f);
 			}
 
 		private:
@@ -333,24 +193,27 @@ namespace Gllpp {
 	template<typename P>
 	class Layout : public ComposableParser<Layout<P>> {
 	public:
-		Layout(P p, std::string definition)
+		Layout(P p, std::string layout)
 			: _p(p)
-			, _definition(definition) {
+			, _layout(layout) {
+			static_assert(std::is_base_of_v<ParserBase, P>);
 		}
 
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			_p._parse_impl(trampoline, _definition, str, f);
+		void _chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, F f) const {
+			(void)layout;
+			_p._chain(trampoline, _layout, str, f);
 		}
 
 	private:
 		P _p;
-		std::string _definition;
+		std::string _layout;
 	};
 
 
+	/// Set layout for all parsers inside the passed Parser p. Layout is a list of chars which are automatically removed after every Parser.
 	template<typename P>
-	Layout<P> SetLayout(P p, std::string definition) {
+	Layout<P> layout(P p, std::string definition) {
 		static_assert(std::is_base_of_v<ParserBase, P>);
 		return { p, definition };
 	}
@@ -360,10 +223,7 @@ namespace Gllpp {
 	class Empty : public ComposableParser<Empty> {
 	public:
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			GraphvizNode ls{ trampoline, "Empty", str };
-			ls.emit();
-
+		void _chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, F f) const {
 			f(trampoline, ParserResult{ str });
 		}
 	};
@@ -394,25 +254,25 @@ namespace Gllpp {
 	class Capture : public ComposableParser<Capture<DELIMITERS...>> {
 	public:
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			size_t i = 0;
-			for (; i < str.size(); ++i) {
-				const auto c = str[i];
+		void _chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, F f) const {
+			size_t numConsumed = 0;
+			for (; numConsumed < str.size(); ++numConsumed) {
+				const auto c = str[numConsumed];
 				if (CaptureDelimiterUtil<DELIMITERS...>::equals(c))
 					goto delimiter_found;
 			}
 
 		delimiter_found:
-			const auto value = str.substr(0, i);
-
-			GraphvizNode ls(trampoline, "Capture '" + std::string(value) + "'", str);
-			ls.emit();
+			const auto value = str.substr(0, numConsumed);
 
 			if (value.empty()) {
 				f(trampoline, ParserResult{ str, "Capture empty value" });
 			}
 
-			f(trampoline, ParserResult{ str.substr(i) });
+			str = str.substr(numConsumed);
+			skip_layout(layout, str);
+
+			f(trampoline, ParserResult{ str });
 			return;
 		}
 	};
@@ -428,16 +288,16 @@ namespace Gllpp {
 		}
 
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			GraphvizNode ls{ trampoline, "'" + _what + "'", str };
-			ls.emit();
-
+		void _chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, F f) const {
 			if (str.size() < _what.size() || memcmp(str.data(), _what.data(), _what.size())) {
 				f(trampoline, ParserResult{ str, "Terminal missing " + _what });
 				return;
 			}
 
-			f(trampoline, ParserResult{ str.substr(_what.size()) });
+			str = str.substr(_what.size());
+			skip_layout(layout, str);
+
+			f(trampoline, ParserResult{ str });
 		}
 
 	private:
@@ -459,19 +319,13 @@ namespace Gllpp {
 		}
 
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			GraphvizNode ls(trampoline, _name, str);
-
-			_lhs._parse_impl(trampoline, layout, str, [layout, f, ls, this](Trampoline& trampoline, ParserResult result) {
+		void _chain(Trampoline& trampoline, const std::string_view layout, std::string_view str, F f) const {
+			_lhs._chain(trampoline, layout, str, [layout, f, this](Trampoline& trampoline, ParserResult result) {
 				if (!result.is_success()) {
-					ls.emit();
 					f(trampoline, result);
 				}
 				else {
-					_rhs._parse_impl(trampoline, layout, result.trail, [=](Trampoline& trampoline, ParserResult result) {
-						ls.emit();
-						f(trampoline, result);
-					});
+					_rhs._chain(trampoline, layout, result.trail, f);
 				}
 			});
 		}
@@ -495,15 +349,10 @@ namespace Gllpp {
 		}
 
 		template<typename F>
-		void __parse_impl_inner(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
-			GraphvizNode ls{ trampoline, _name, str };
-
+		void _chain(Trampoline& trampoline, std::string_view layout, std::string_view str, F f) const {
 			_gather([&](auto& parser) {
-				trampoline.add([str, layout, f, ls, &parser](Trampoline& trampoline) {
-					parser._parse_impl(trampoline, layout, str, [f, ls](Trampoline& trampoline, ParserResult result) {
-						ls.emit();
-						f(trampoline, result);
-					});
+				trampoline.add([str, layout, f, &parser](Trampoline& trampoline) {
+					parser._chain(trampoline, layout, str, f);
 				});
 			});
 		}
@@ -528,9 +377,8 @@ namespace Gllpp {
 	}
 
 	template<typename P>
-	Disjunction<P, Empty> Optional(P p) {
+	Disjunction<P, Empty> optional(P p) {
 		static_assert(std::is_base_of_v<ParserBase, P>);
 		return { p, Empty() };
 	}
-
 }

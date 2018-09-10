@@ -108,6 +108,7 @@
       <SDLCheck>true</SDLCheck>
       <AdditionalIncludeDirectories>include</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
